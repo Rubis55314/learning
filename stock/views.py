@@ -69,6 +69,55 @@ def stock_buy(request, pk):
     return render(request, 'stock.html', context)
 
 @login_required
+def stock_sell(request, pk):
+    if request.method != "POST":
+        return redirect('stock:detail', pk=pk)
+
+    stock = get_object_or_404(Stock, pk=pk)
+    form = BuySellForm(request.POST)
+
+    if form.is_valid():
+        amount = form.cleaned_data['amount']
+        price = form.cleaned_data['price']
+        sell_revenue = price * amount
+
+        # Получаем или создаём запись об акциях пользователя
+        acc_stock, created = AccountStock.objects.get_or_create(
+            account=request.user.account,
+            stock=stock,
+            defaults={'average_buy_cost': 0, 'amount': 0}
+        )
+
+        # Проверяем, достаточно ли акций для продажи
+        if acc_stock.amount < amount:
+            form.add_error(None, f'Недостаточно акций {stock.ticker} для продажи')
+        else:
+            # Списываем акции
+            acc_stock.amount -= amount
+            # Если количество становится нулевым, среднюю цену можно сбросить (необязательно)
+            if acc_stock.amount == 0:
+                acc_stock.average_buy_cost = 0
+            acc_stock.save()
+
+            # Пополняем валютный счёт
+            acc_currency, created = AccountCurrency.objects.get_or_create(
+                account=request.user.account,
+                currency=stock.currency,
+                defaults={'amount': 0}
+            )
+            acc_currency.amount += sell_revenue
+            acc_currency.save()
+
+            return redirect('stock:list')
+
+    # Если форма невалидна или произошла ошибка, возвращаем страницу деталей с формой
+    context = {
+        'stock': get_object_or_404(Stock, pk=pk),
+        'form': form
+    }
+    return render(request, 'stock.html', context)
+
+@login_required
 def account(request):
     currencies = cache.get(f'currencies_{request.user.username}')
     stocks = cache.get(f'stocks_{request.user.username}')
